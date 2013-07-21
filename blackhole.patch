@@ -1,0 +1,76 @@
+--- tcp_input.c.bak 2007-08-03 18:05:34.000000000 +0200
++++ tcp_input.c 2007-08-03 18:14:39.000000000 +0200
+@@ -1211,6 +1211,12 @@
+  tcp4_log_refused(ip, th);
+  }
+  TCP_FIELDS_TO_HOST(th);
++ if (blackhole) {
++#ifdef TCP_DEBUG
++ printf("Blackholing\n");
++#endif
++ goto drop;
++ }
+  goto dropwithreset_ratelim;
+  }
+ #if defined(IPSEC) || defined(FAST_IPSEC)
+@@ -2197,6 +2203,8 @@
+  switch (tp->t_state) {
+  case TCPS_SYN_RECEIVED:
+  so->so_error = ECONNREFUSED;
++ if (blackhole)
++ goto drop;
+  goto close;
+ 
+  case TCPS_ESTABLISHED:
+--- tcp_usrreq.c.bak 2007-08-03 18:05:42.000000000 +0200
++++ tcp_usrreq.c 2007-08-03 18:13:12.000000000 +0200
+@@ -1989,6 +1989,13 @@
+         SYSCTL_DESCR("TCP drop connection"),
+         sysctl_net_inet_tcp_drop, 0, NULL, 0,
+         CTL_NET, pf, IPPROTO_TCP, TCPCTL_DROP, CTL_EOL);
++ sysctl_createv(clog, 0, NULL, NULL
++        CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
++        CTLTYPE_INT, "blackhole",
++        SYSCTL_DESCR("Do not send RST if connection refused"),
++        NULL, 0, &blackhole, sizeof(blackhole),
++        CTL_NET, pf, IPPROTO_TCP, TCPCTL_BLACKHOLE,
++        CTL_EOL);
+ #if NRND > 0
+  sysctl_createv(clog, 0, NULL, NULL,
+         CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
+--- tcp_var.h.bak 2007-08-03 18:05:51.000000000 +0200
++++ tcp_var.h 2007-08-03 18:08:58.000000000 +0200
+@@ -701,6 +701,7 @@
+ #define TCPCTL_DEBX 32 /* # of tcp debug sockets */
+ #define TCPCTL_DROP 33 /* drop tcp connection */
+ #define TCPCTL_MAXID 34
++#define TCPCTL_BLACKHOLE 35 /* TCP blackholing */
+ 
+ #define TCPCTL_NAMES { \
+  { 0, 0 }, \
+@@ -737,6 +738,7 @@
+  { "debug", CTLTYPE_STRUCT }, \
+  { "debx", CTLTYPE_INT }, \
+  { "drop", CTLTYPE_STRUCT }, \
++ { "blackhole", CTLTYPE_INT }, \
+ }
+ 
+ #ifdef _KERNEL
+@@ -776,6 +778,7 @@
+ extern int tcp_syn_cache_size;
+ extern struct syn_cache_head tcp_syn_cache[];
+ extern u_long syn_cache_count;
++extern int blackhole; /* Blackholing enabled/disabled? */
+ 
+ #ifdef MBUFTRACE
+ extern struct mowner tcp_rx_mowner;
+--- tcp_subr.c.bak 2007-08-03 18:06:38.000000000 +0200
++++ tcp_subr.c 2007-08-03 18:07:02.000000000 +0200
+@@ -209,6 +209,7 @@
+ int tcp_sack_globalmaxholes = 1024;
+ int tcp_sack_globalholes = 0;
+ int tcp_ecn_maxretries = 1;
++int blackhole = 0;
+ 
+ /* tcb hash */
+ #ifndef TCBHASHSIZE
